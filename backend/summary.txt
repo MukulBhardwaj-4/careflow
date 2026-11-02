@@ -1,0 +1,1513 @@
+===============================================================================
+                         CAREFLOW AI - PROJECT SUMMARY
+===============================================================================
+
+PROJECT OVERVIEW:
+CareFlow AI is a hospital management system built with Node.js, Express, MongoDB,
+and Mongoose. It manages doctors, nurses, patients, prescriptions, medication
+reminders, and escalations with real-time notifications and AI-powered features.
+
+===============================================================================
+                              TECH STACK
+===============================================================================
+
+Backend: Node.js (ES Modules), Express 5.2.1
+Database: MongoDB with Mongoose 9.11.4
+Authentication: JWT (Access Token + Refresh Token)
+Password Hashing: bcrypt 6.0.0
+Real-time Communication: Socket.IO
+Push Notifications: Firebase FCM
+Background Jobs: Inngest
+AI Integration: Google Gemini API
+Validation: Zod
+
+===============================================================================
+                         DATABASE MODELS
+===============================================================================
+
+1. ADMIN
+   - name (String, required)
+   - email (String, unique, required)
+   - passwordHash (String, hidden)
+   - refreshTokenHash (String, hidden)
+   - refreshTokenExpiresAt (Date)
+   - timestamps
+
+2. DOCTOR
+   - name (String, required)
+   - email (String, unique, required)
+   - passwordHash (String, hidden)
+   - dob (Date, required)
+   - specialties (Array of Skill ObjectIds)
+   - refreshTokenHash (String, hidden)
+   - refreshTokenExpiresAt (Date)
+   - timestamps
+
+3. NURSE
+   - name (String, required)
+   - email (String, unique, required)
+   - passwordHash (String, hidden)
+   - dob (Date, required)
+   - experience (enum: no_experience, 2_plus, 5_plus, 10_plus)
+   - shift (enum: day, night)
+   - available (Boolean, default: true)
+   - refreshTokenHash (String, hidden)
+   - refreshTokenExpiresAt (Date)
+   - timestamps
+
+4. PATIENT
+   - name (String, required)
+   - email (String, unique, required)
+   - passwordHash (String, hidden)
+   - dob (Date, required)
+   - condition (String, required)
+   - severity (enum: low, medium, high, critical)
+   - aiSummary (String)
+   - doctorId (Doctor reference)
+   - nurseId (Nurse reference)
+   - passwordChangeRequired (Boolean, default: false)
+   - refreshTokenHash (String, hidden)
+   - refreshTokenExpiresAt (Date)
+   - timestamps
+
+5. SKILL
+   - name (String, unique, required)
+   - timestamps
+
+6. REGISTRATION_REQUEST
+   - name (String, required)
+   - email (String, unique, required)
+   - passwordHash (String, hidden)
+   - dob (Date, required)
+   - role (enum: doctor, nurse)
+   - specialties (Array of Skill ObjectIds, for doctors)
+   - experience (enum, for nurses)
+   - shift (enum, for nurses)
+   - status (enum: pending, approved, rejected, default: pending)
+   - reviewedBy (Admin reference)
+   - reviewedAt (Date)
+   - rejectionReason (String)
+   - timestamps
+
+7. PRESCRIPTION
+   - patientId (Patient reference, required)
+   - doctorId (Doctor reference, required)
+   - prescription (String, required)
+   - medications (Array of medications)
+     * medicineName (String)
+     * dosage (String)
+     * reminderTimes (Array of time strings)
+   - timestamps
+
+8. MEDICATION_SCHEDULE
+   - patientId (Patient reference, required)
+   - prescriptionId (Prescription reference, required)
+   - medicineName (String, required)
+   - dosage (String, required)
+   - reminderTimes (Array of strings, required)
+   - startDate (Date, required)
+   - endDate (Date, required)
+   - timezone (String, required)
+   - isActive (Boolean, default: true)
+   - timestamps
+
+9. MEDICATION_REMINDER
+   - patientId (Patient reference, required)
+   - medicationScheduleId (MedicationSchedule reference, required)
+   - prescriptionId (Prescription reference, required)
+   - medicineName (String, required)
+   - dosage (String, required)
+   - scheduledAt (Date, required)
+   - progress (enum: pending, ongoing, done, default: pending)
+   - acknowledgedAt (Date)
+   - timestamps
+
+10. ESCALATION
+    - patientId (Patient reference, required)
+    - nurseId (Nurse reference, required)
+    - medicationReminderId (MedicationReminder reference, required)
+    - medicineName (String, required)
+    - dosage (String, required)
+    - level (Number, default: 2)
+    - status (enum: ongoing, resolved)
+    - resolvedAt (Date)
+    - timestamps
+
+===============================================================================
+                         API ENDPOINTS
+===============================================================================
+
+BASE URL: http://localhost:8000/api/v1
+
+───────────────────────────────────────────────────────────────────────────────
+AUTHENTICATION ENDPOINTS
+───────────────────────────────────────────────────────────────────────────────
+
+1. SIGNUP - DOCTOR
+   POST /auth/signup/doctor
+
+   Request Body:
+   {
+     "name": "Dr. John Doe",
+     "email": "john@example.com",
+     "password": "SecurePassword123",
+     "dob": "1990-05-15",
+     "specialties": ["skillId1", "skillId2"]  // optional
+   }
+
+   Response (201):
+   {
+     "statusCode": 201,
+     "data": {
+       "user": {
+         "_id": "userId",
+         "name": "Dr. John Doe",
+         "email": "john@example.com",
+         "dob": "1990-05-15",
+         "specialties": ["skillId1", "skillId2"],
+         "createdAt": "2026-11-02T...",
+         "updatedAt": "2026-11-02T..."
+       },
+       "accessToken": "jwt_access_token"
+     },
+     "message": "Doctor registered successfully",
+     "success": true
+   }
+
+2. SIGNUP - NURSE
+   POST /auth/signup/nurse
+
+   Request Body:
+   {
+     "name": "Jane Smith",
+     "email": "jane@example.com",
+     "password": "SecurePassword123",
+     "dob": "1992-03-20",
+     "experience": "5_plus",
+     "shift": "day"
+   }
+
+   Response (201):
+   {
+     "statusCode": 201,
+     "data": {
+       "user": {
+         "_id": "userId",
+         "name": "Jane Smith",
+         "email": "jane@example.com",
+         "dob": "1992-03-20",
+         "experience": "5_plus",
+         "shift": "day",
+         "available": true,
+         "createdAt": "2026-11-02T...",
+         "updatedAt": "2026-11-02T..."
+       },
+       "accessToken": "jwt_access_token"
+     },
+     "message": "Nurse registered successfully",
+     "success": true
+   }
+
+3. LOGIN (All Roles)
+   POST /auth/login
+
+   Request Body:
+   {
+     "email": "user@example.com",
+     "password": "SecurePassword123",
+     "role": "doctor" | "nurse" | "patient" | "admin"
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "user": {
+         "_id": "userId",
+         "name": "User Name",
+         "email": "user@example.com",
+         ...user fields
+       },
+       "accessToken": "jwt_access_token"
+     },
+     "message": "Login successful",
+     "success": true
+   }
+
+   Cookies Set:
+   - refreshToken (httpOnly, 7 days expiry)
+
+4. REFRESH TOKEN
+   POST /auth/refresh-token
+
+   Request Body:
+   {
+     "refreshToken": "jwt_refresh_token",
+     "role": "doctor" | "nurse" | "patient" | "admin"
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "accessToken": "new_jwt_access_token"
+     },
+     "message": "Token refreshed",
+     "success": true
+   }
+
+5. LOGOUT
+   POST /auth/logout
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": null,
+     "message": "Logout successful",
+     "success": true
+   }
+
+6. GET CURRENT USER
+   GET /auth/me
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "userId",
+       "name": "User Name",
+       "email": "user@example.com",
+       ...user fields
+     },
+     "message": "Current user fetched",
+     "success": true
+   }
+
+───────────────────────────────────────────────────────────────────────────────
+ADMIN ENDPOINTS (Requires: Authorization, Role: admin)
+───────────────────────────────────────────────────────────────────────────────
+
+1. GET PENDING REGISTRATIONS
+   GET /admin/registrations/pending?role=doctor|nurse
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "requestId",
+         "name": "Dr. John Doe",
+         "email": "john@example.com",
+         "dob": "1990-05-15",
+         "role": "doctor",
+         "specialties": [{ "_id": "skillId", "name": "Cardiologist" }],
+         "status": "pending",
+         "createdAt": "2026-11-02T..."
+       }
+     ],
+     "message": "Pending registrations fetched",
+     "success": true
+   }
+
+2. APPROVE REGISTRATION
+   POST /admin/registrations/:id/approve
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body (optional):
+   {
+     "rejectionReason": null
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "request": {
+         "_id": "requestId",
+         "status": "approved",
+         "reviewedBy": "adminId",
+         "reviewedAt": "2026-11-02T..."
+       },
+       "user": {
+         "_id": "userId",
+         "name": "Dr. John Doe",
+         "email": "john@example.com",
+         ...user fields
+       }
+     },
+     "message": "Registration approved",
+     "success": true
+   }
+
+3. REJECT REGISTRATION
+   POST /admin/registrations/:id/reject
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body:
+   {
+     "rejectionReason": "Incomplete documentation"
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "requestId",
+       "status": "rejected",
+       "rejectionReason": "Incomplete documentation",
+       "reviewedBy": "adminId",
+       "reviewedAt": "2026-11-02T..."
+     },
+     "message": "Registration rejected",
+     "success": true
+   }
+
+4. CREATE PATIENT
+   POST /admin/patients
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body:
+   {
+     "name": "Patient Name",
+     "email": "patient@example.com",
+     "password": "SecurePassword123",
+     "dob": "1985-07-10",
+     "condition": "Diabetes Type 2",
+     "severity": "medium",
+     "doctorId": "doctorId",
+     "nurseId": "nurseId"
+   }
+
+   Response (201):
+   {
+     "statusCode": 201,
+     "data": {
+       "_id": "patientId",
+       "name": "Patient Name",
+       "email": "patient@example.com",
+       "dob": "1985-07-10",
+       "condition": "Diabetes Type 2",
+       "severity": "medium",
+       "doctorId": "doctorId",
+       "nurseId": "nurseId",
+       "passwordChangeRequired": true,
+       "createdAt": "2026-11-02T..."
+     },
+     "message": "Patient created",
+     "success": true
+   }
+
+5. GET PATIENTS
+   GET /admin/patients?doctorId=...&nurseId=...&severity=...
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "patientId",
+         "name": "Patient Name",
+         "email": "patient@example.com",
+         "condition": "Diabetes Type 2",
+         "severity": "medium",
+         "doctorId": {
+           "_id": "doctorId",
+           "name": "Dr. John Doe",
+           "email": "john@example.com"
+         },
+         "nurseId": {
+           "_id": "nurseId",
+           "name": "Jane Smith",
+           "email": "jane@example.com",
+           "shift": "day"
+         }
+       }
+     ],
+     "message": "Patients fetched",
+     "success": true
+   }
+
+6. GET PATIENT BY ID
+   GET /admin/patients/:patientId
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "patientId",
+       "name": "Patient Name",
+       "email": "patient@example.com",
+       "dob": "1985-07-10",
+       "condition": "Diabetes Type 2",
+       "severity": "medium",
+       "aiSummary": "Patient summary from AI...",
+       "doctorId": {...},
+       "nurseId": {...}
+     },
+     "message": "Patient fetched",
+     "success": true
+   }
+
+7. UPDATE PATIENT
+   PUT /admin/patients/:patientId
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body (all optional):
+   {
+     "name": "Updated Name",
+     "dob": "1985-07-10",
+     "condition": "Diabetes Type 2",
+     "severity": "high",
+     "aiSummary": "Updated summary",
+     "doctorId": "doctorId",
+     "nurseId": "nurseId"
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       ...updated patient data
+     },
+     "message": "Patient updated",
+     "success": true
+   }
+
+8. ASSIGN DOCTOR
+   POST /admin/patients/:patientId/assign-doctor
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body:
+   {
+     "doctorId": "doctorId"
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       ...patient with updated doctorId
+     },
+     "message": "Doctor assigned",
+     "success": true
+   }
+
+9. ASSIGN NURSE
+   POST /admin/patients/:patientId/assign-nurse
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body:
+   {
+     "nurseId": "nurseId"
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       ...patient with updated nurseId
+     },
+     "message": "Nurse assigned",
+     "success": true
+   }
+
+───────────────────────────────────────────────────────────────────────────────
+DOCTOR ENDPOINTS (Requires: Authorization, Role: doctor)
+───────────────────────────────────────────────────────────────────────────────
+
+1. GET PROFILE
+   GET /doctor/profile
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "doctorId",
+       "name": "Dr. John Doe",
+       "email": "john@example.com",
+       "dob": "1990-05-15",
+       "specialties": [
+         { "_id": "skillId", "name": "Cardiologist" }
+       ]
+     },
+     "message": "Profile fetched",
+     "success": true
+   }
+
+2. UPDATE PROFILE
+   PUT /doctor/profile
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body (optional):
+   {
+     "name": "Updated Name",
+     "dob": "1990-05-15",
+     "specialties": ["skillId1", "skillId2"]
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {...updated doctor data},
+     "message": "Profile updated",
+     "success": true
+   }
+
+3. GET ASSIGNED PATIENTS
+   GET /doctor/patients
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "patientId",
+         "name": "Patient Name",
+         "email": "patient@example.com",
+         "condition": "Diabetes Type 2",
+         "severity": "medium",
+         "nurseId": {...}
+       }
+     ],
+     "message": "Assigned patients fetched",
+     "success": true
+   }
+
+4. GET PATIENT DETAILS
+   GET /doctor/patients/:patientId
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "patientId",
+       "name": "Patient Name",
+       "email": "patient@example.com",
+       "dob": "1985-07-10",
+       "condition": "Diabetes Type 2",
+       "severity": "medium",
+       "aiSummary": "AI-generated summary...",
+       "nurseId": {...}
+     },
+     "message": "Patient details fetched",
+     "success": true
+   }
+
+5. CREATE PRESCRIPTION
+   POST /doctor/prescriptions
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body:
+   {
+     "patientId": "patientId",
+     "prescription": "Take medication twice daily with food",
+     "medications": [
+       {
+         "medicineName": "Metformin",
+         "dosage": "500mg",
+         "reminderTimes": ["08:00", "20:00"]
+       },
+       {
+         "medicineName": "Lisinopril",
+         "dosage": "10mg",
+         "reminderTimes": ["08:00"]
+       }
+     ]
+   }
+
+   Response (201):
+   {
+     "statusCode": 201,
+     "data": {
+       "_id": "prescriptionId",
+       "patientId": "patientId",
+       "doctorId": "doctorId",
+       "prescription": "Take medication twice daily with food",
+       "medications": [
+         {
+           "medicineName": "Metformin",
+           "dosage": "500mg",
+           "reminderTimes": ["08:00", "20:00"]
+         }
+       ],
+       "createdAt": "2026-11-02T..."
+     },
+     "message": "Prescription created",
+     "success": true
+   }
+
+6. UPDATE PRESCRIPTION
+   PUT /doctor/prescriptions/:prescriptionId
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body (optional):
+   {
+     "prescription": "Updated prescription notes",
+     "medications": [...]
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {...updated prescription},
+     "message": "Prescription updated",
+     "success": true
+   }
+
+7. GET PRESCRIPTIONS
+   GET /doctor/prescriptions?patientId=...
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "prescriptionId",
+         "patientId": "patientId",
+         "prescription": "...",
+         "medications": [...],
+         "createdAt": "2026-11-02T..."
+       }
+     ],
+     "message": "Prescriptions fetched",
+     "success": true
+   }
+
+───────────────────────────────────────────────────────────────────────────────
+NURSE ENDPOINTS (Requires: Authorization, Role: nurse)
+───────────────────────────────────────────────────────────────────────────────
+
+1. GET PROFILE
+   GET /nurse/profile
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "nurseId",
+       "name": "Jane Smith",
+       "email": "jane@example.com",
+       "dob": "1992-03-20",
+       "experience": "5_plus",
+       "shift": "day",
+       "available": true
+     },
+     "message": "Profile fetched",
+     "success": true
+   }
+
+2. UPDATE PROFILE
+   PUT /nurse/profile
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body (optional):
+   {
+     "name": "Updated Name",
+     "experience": "10_plus",
+     "shift": "night",
+     "available": false
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {...updated nurse data},
+     "message": "Profile updated",
+     "success": true
+   }
+
+3. GET ASSIGNED PATIENTS
+   GET /nurse/patients
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "patientId",
+         "name": "Patient Name",
+         "email": "patient@example.com",
+         "condition": "Diabetes",
+         "severity": "medium",
+         "doctorId": {...}
+       }
+     ],
+     "message": "Assigned patients fetched",
+     "success": true
+   }
+
+4. GET PENDING REMINDERS
+   GET /nurse/reminders/pending
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "reminderId",
+         "patientId": "patientId",
+         "medicationScheduleId": "scheduleId",
+         "medicineName": "Metformin",
+         "dosage": "500mg",
+         "scheduledAt": "2026-11-02T08:00:00Z",
+         "progress": "pending",
+         "createdAt": "2026-11-02T..."
+       }
+     ],
+     "message": "Pending reminders fetched",
+     "success": true
+   }
+
+5. GET ESCALATIONS
+   GET /nurse/escalations?status=ongoing|resolved
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "escalationId",
+         "patientId": {
+           "_id": "patientId",
+           "name": "Patient Name",
+           "condition": "Diabetes",
+           "severity": "medium"
+         },
+         "medicationReminderId": {...},
+         "medicineName": "Metformin",
+         "dosage": "500mg",
+         "level": 2,
+         "status": "ongoing",
+         "createdAt": "2026-11-02T..."
+       }
+     ],
+     "message": "Escalations fetched",
+     "success": true
+   }
+
+6. RESOLVE ESCALATION
+   POST /nurse/escalations/:escalationId/resolve
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "escalationId",
+       "status": "resolved",
+       "resolvedAt": "2026-11-02T..."
+     },
+     "message": "Escalation resolved",
+     "success": true
+   }
+
+───────────────────────────────────────────────────────────────────────────────
+PATIENT ENDPOINTS (Requires: Authorization, Role: patient)
+───────────────────────────────────────────────────────────────────────────────
+
+1. GET PROFILE
+   GET /patient/profile
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "patientId",
+       "name": "Patient Name",
+       "email": "patient@example.com",
+       "dob": "1985-07-10",
+       "condition": "Diabetes Type 2",
+       "severity": "medium",
+       "aiSummary": "AI-generated summary...",
+       "doctorId": {...},
+       "nurseId": {...},
+       "passwordChangeRequired": false
+     },
+     "message": "Profile fetched",
+     "success": true
+   }
+
+2. UPDATE PROFILE
+   PUT /patient/profile
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Request Body (optional):
+   {
+     "name": "Updated Name",
+     "dob": "1985-07-10",
+     "condition": "Diabetes Type 2",
+     "severity": "high"
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {...updated patient data},
+     "message": "Profile updated",
+     "success": true
+   }
+
+3. GET PRESCRIPTIONS
+   GET /patient/prescriptions
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "prescriptionId",
+         "doctorId": {
+           "_id": "doctorId",
+           "name": "Dr. John Doe",
+           "email": "john@example.com"
+         },
+         "prescription": "Take medication twice daily with food",
+         "medications": [
+           {
+             "medicineName": "Metformin",
+             "dosage": "500mg",
+             "reminderTimes": ["08:00", "20:00"]
+           }
+         ],
+         "createdAt": "2026-11-02T..."
+       }
+     ],
+     "message": "Prescriptions fetched",
+     "success": true
+   }
+
+4. GET MEDICATION SCHEDULES
+   GET /patient/medication-schedules
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "scheduleId",
+         "medicineName": "Metformin",
+         "dosage": "500mg",
+         "reminderTimes": ["08:00", "20:00"],
+         "startDate": "2026-11-02T00:00:00Z",
+         "endDate": "2026-12-02T00:00:00Z",
+         "timezone": "America/New_York",
+         "isActive": true,
+         "prescriptionId": {...},
+         "createdAt": "2026-11-02T..."
+       }
+     ],
+     "message": "Medication schedules fetched",
+     "success": true
+   }
+
+5. GET REMINDERS
+   GET /patient/reminders?status=pending|ongoing|done
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": [
+       {
+         "_id": "reminderId",
+         "medicineName": "Metformin",
+         "dosage": "500mg",
+         "scheduledAt": "2026-11-02T08:00:00Z",
+         "progress": "pending",
+         "acknowledgedAt": null,
+         "medicationScheduleId": {...},
+         "createdAt": "2026-11-02T..."
+       }
+     ],
+     "message": "Reminders fetched",
+     "success": true
+   }
+
+6. ACKNOWLEDGE REMINDER
+   POST /patient/reminders/:reminderId/acknowledge
+
+   Headers:
+   Authorization: Bearer <accessToken>
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "reminderId",
+       "progress": "done",
+       "acknowledgedAt": "2026-11-02T08:05:00Z",
+       "medicineName": "Metformin",
+       "dosage": "500mg"
+     },
+     "message": "Reminder acknowledged",
+     "success": true
+   }
+
+───────────────────────────────────────────────────────────────────────────────
+PRESCRIPTION ENDPOINTS (Doctor creates, Doctor/Patient reads)
+───────────────────────────────────────────────────────────────────────────────
+
+1. CREATE PRESCRIPTION
+   POST /prescriptions
+
+   Headers:
+   Authorization: Bearer <accessToken>
+   Role: doctor
+
+   Request Body:
+   {
+     "patientId": "patientId",
+     "prescription": "Take medication twice daily with food",
+     "medications": [
+       {
+         "medicineName": "Metformin",
+         "dosage": "500mg",
+         "reminderTimes": ["08:00", "20:00"]
+       }
+     ]
+   }
+
+   Response (201):
+   {
+     "statusCode": 201,
+     "data": {
+       "_id": "prescriptionId",
+       "patientId": "patientId",
+       "doctorId": "doctorId",
+       "prescription": "...",
+       "medications": [...],
+       "createdAt": "2026-11-02T..."
+     },
+     "message": "Prescription created",
+     "success": true
+   }
+
+2. UPDATE PRESCRIPTION
+   PUT /prescriptions/:prescriptionId
+
+   Headers:
+   Authorization: Bearer <accessToken>
+   Role: doctor
+
+   Request Body (optional):
+   {
+     "prescription": "Updated notes",
+     "medications": [...]
+   }
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {...updated prescription},
+     "message": "Prescription updated",
+     "success": true
+   }
+
+3. GET PRESCRIPTION
+   GET /prescriptions/:prescriptionId
+
+   Headers:
+   Authorization: Bearer <accessToken>
+   Role: doctor or patient
+
+   Response (200):
+   {
+     "statusCode": 200,
+     "data": {
+       "_id": "prescriptionId",
+       "patientId": {...},
+       "doctorId": {...},
+       "prescription": "...",
+       "medications": [...]
+     },
+     "message": "Prescription fetched",
+     "success": true
+   }
+
+4. CREATE MEDICATION SCHEDULES
+   POST /prescriptions/:prescriptionId/schedules
+
+   Headers:
+   Authorization: Bearer <accessToken>
+   Role: doctor
+
+   Request Body:
+   {
+     "startDate": "2026-11-02T00:00:00Z",
+     "endDate": "2026-12-02T00:00:00Z",
+     "timezone": "America/New_York"
+   }
+
+   Response (201):
+   {
+     "statusCode": 201,
+     "data": [
+       {
+         "_id": "scheduleId",
+         "patientId": "patientId",
+         "prescriptionId": "prescriptionId",
+         "medicineName": "Metformin",
+         "dosage": "500mg",
+         "reminderTimes": ["08:00", "20:00"],
+         "startDate": "2026-11-02T00:00:00Z",
+         "endDate": "2026-12-02T00:00:00Z",
+         "timezone": "America/New_York",
+         "isActive": true
+       }
+     ],
+     "message": "Medication schedules created",
+     "success": true
+   }
+
+───────────────────────────────────────────────────────────────────────────────
+HEALTH CHECK ENDPOINT
+───────────────────────────────────────────────────────────────────────────────
+
+GET /health
+
+Response (200):
+{
+  "status": "OK",
+  "message": "CareFlow AI Backend"
+}
+
+===============================================================================
+                      AI INTEGRATION & VALIDATION
+===============================================================================
+
+GEMINI AI INTEGRATION:
+
+1. PATIENT AI SUMMARY GENERATION
+   - Triggered when patient is created or admin requests
+   - Generates clinical summary based on condition, severity, age
+   - Validates response with Zod schema
+
+   Validation Schema:
+   {
+     "summary": string (50-500 chars, alphanumeric)
+   }
+
+   Response Format:
+   {
+     "summary": "Patient is a 40-year-old with Type 2 Diabetes.
+                 Requires close monitoring of blood glucose levels...",
+     "patient": {...patient data}
+   }
+
+2. NURSE RECOMMENDATION
+   - AI recommends best available nurse based on:
+     * Patient severity
+     * Patient condition
+     * Nurse experience
+     * Shift preference
+
+   Validation Schema:
+   {
+     "name": string (required),
+     "experience": enum(no_experience, 2_plus, 5_plus, 10_plus),
+     "shift": enum(day, night),
+     "available": boolean
+   }
+
+   Response Format:
+   {
+     "_id": "nurseId",
+     "name": "Recommended Nurse Name",
+     "experience": "5_plus",
+     "shift": "day"
+   }
+
+3. MEDICATION COMPLIANCE ANALYSIS
+   - Analyzes patient's medication acknowledgement history
+   - Generates compliance report with recommendations
+
+   Validation Schema:
+   {
+     "complianceRate": number (0-100),
+     "analysis": string (20-500 chars)
+   }
+
+   Response Format:
+   {
+     "complianceRate": 85.5,
+     "analysis": "Patient shows good compliance with 85% acknowledgement rate.
+                  Consider reminder optimization for afternoon doses..."
+   }
+
+AI ERROR HANDLING:
+- All AI responses validated with Zod
+- If validation fails, log error and return default/cached response
+- Prevent cascade failures in background jobs
+- Alert admin if AI service fails repeatedly
+
+===============================================================================
+                      BACKGROUND JOBS (INNGEST)
+===============================================================================
+
+1. GENERATE PATIENT SUMMARY
+   Event: careflow/patient/summary.request
+   Trigger: Admin creates patient, or manual request
+   Process:
+   - Call Gemini API for summary generation
+   - Validate response
+   - Save to patient.aiSummary
+   - Handle errors gracefully
+
+2. SCHEDULE MEDICATION REMINDER
+   Event: careflow/medication/schedule
+   Trigger: When medication schedule is created
+   Process:
+   - Create MedicationReminder document
+   - Schedule notification trigger
+   - Idempotent - prevent duplicate reminders
+
+3. SEND MEDICATION REMINDER
+   Event: careflow/reminder/send
+   Trigger: On reminder time
+   Process:
+   - Fetch reminder details
+   - Send FCM notification
+   - Emit Socket.IO event
+   - Mark as "ongoing"
+
+4. WAIT AND ESCALATE
+   Event: careflow/reminder/wait
+   Trigger: After reminder sent
+   Process:
+   - Wait 5 minutes
+   - Check if patient acknowledged
+   - If not acknowledged:
+     * Create Escalation document
+     * Notify assigned nurse
+     * Notify assigned doctor
+     * Emit Socket.IO events
+
+5. ASSIGN NURSE
+   Event: careflow/nurse/assign
+   Trigger: When patient needs nurse assignment
+   Process:
+   - Call AI recommendation engine
+   - Select best available nurse
+   - Assign to patient
+   - Notify nurse
+   - Emit Socket.IO event
+
+6. AI SUMMARY BACKGROUND
+   Event: careflow/ai/summary/background
+   Trigger: Scheduled background task
+   Process:
+   - Generate AI summary
+   - Save to database
+   - Non-blocking operation
+
+INNGEST FEATURES:
+- Automatic retry on failure
+- Idempotency to prevent duplicate jobs
+- Step-based execution for reliability
+- Error logging and monitoring
+- Background processing without blocking API
+
+===============================================================================
+                         REAL-TIME COMMUNICATION
+===============================================================================
+
+SOCKET.IO EVENTS:
+
+Client → Server:
+- join_patient_room(patientId)
+- join_nurse_room(nurseId)
+- join_doctor_room(doctorId)
+- join_admin_room()
+- disconnect
+
+Server → Client (Patient):
+- medication_reminder({reminderId, medicineName, dosage, scheduledAt})
+- escalation_created({escalationId, patientId, medicineName, dosage})
+
+Server → Client (Nurse):
+- patient_assigned({patientId, severity, condition})
+- escalation_created({escalationId, patientId, medicineName, dosage})
+
+Server → Client (Doctor):
+- escalation_created({escalationId, patientId, medicineName})
+- patient_updated({patientId, ...updates})
+
+Server → Client (Admin):
+- registration_request({requestId, role, status})
+- patient_created({patientId, name, condition})
+
+SOCKET ROOMS:
+- patient_{patientId}
+- nurse_{nurseId}
+- doctor_{doctorId}
+- admin_room
+
+===============================================================================
+                       FIREBASE FCM INTEGRATION
+===============================================================================
+
+NOTIFICATION TYPES:
+
+1. MEDICATION REMINDER
+   Title: "Medication Reminder"
+   Body: "Time to take your medication: {medicineName} - {dosage}"
+   Data: { type: "MEDICATION_REMINDER", reminderId, ... }
+   Target: Patient
+
+2. ESCALATION ALERT
+   Title: "Escalation Alert"
+   Body: "Patient requires attention for medication: {medicineName}"
+   Data: { type: "ESCALATION", escalationId, patientId, ... }
+   Target: Nurse
+
+3. PATIENT ASSIGNMENT
+   Title: "Patient Assignment"
+   Body: "You have been assigned a new patient"
+   Data: { type: "PATIENT_ASSIGNMENT", patientId, ... }
+   Target: Nurse
+
+4. REGISTRATION APPROVED
+   Title: "Registration Approved"
+   Body: "Your registration has been approved. You can now login."
+   Data: { type: "REGISTRATION_APPROVED", userId, ... }
+   Target: User
+
+ERROR HANDLING:
+- If device token invalid, remove from database
+- Retry on temporary failures
+- Log all FCM failures for monitoring
+- Fallback to Socket.IO if FCM fails
+
+===============================================================================
+                         SECURITY & VALIDATION
+===============================================================================
+
+AUTHENTICATION:
+- JWT with 15-minute access token expiry
+- Refresh token rotation on each refresh
+- HttpOnly cookies for refresh tokens
+- Separate refresh token hash storage
+
+AUTHORIZATION:
+- Role-based access control (RBAC)
+- Route-level authorization middleware
+- Resource-level ownership checks
+- Patients see only their data
+- Nurses see only assigned patients
+- Doctors see only their patients
+
+PASSWORD SECURITY:
+- bcrypt hashing with 10 rounds
+- Never store plaintext passwords
+- Hash refresh tokens before storage
+- Constant-time comparison for tokens
+
+INPUT VALIDATION:
+- Zod schema validation on all inputs
+- Email validation
+- Date format validation
+- Enum validation for status/role
+- Array length validation
+
+ERROR HANDLING:
+- All errors throw ApiError with status codes
+- Consistent error response format
+- Stack traces logged (not sent to client)
+- Graceful degradation on external service failures
+
+===============================================================================
+                       ENVIRONMENT VARIABLES
+===============================================================================
+
+REQUIRED:
+- MONGODB_URI: MongoDB connection string
+- PORT: Server port (default: 8000)
+- NODE_ENV: development|production
+- CORS_ORIGIN: Frontend URL
+- ACCESS_TOKEN_SECRET: JWT access token secret
+- REFRESH_TOKEN_SECRET: JWT refresh token secret
+- GEMINI_API_KEY: Google Gemini API key
+- INNGEST_EVENT_KEY: Inngest event key
+- FIREBASE_*: Firebase configuration keys
+
+OPTIONAL:
+- ACCESS_TOKEN_EXPIRY: Access token expiry (default: 15m)
+- REFRESH_TOKEN_EXPIRY: Refresh token expiry (default: 7d)
+- INNGEST_BASE_URL: Inngest base URL
+
+===============================================================================
+                            FILE STRUCTURE
+===============================================================================
+
+backend/
+├── src/
+│   ├── controllers/          # HTTP request handlers
+│   │   ├── authController.js
+│   │   ├── adminController.js
+│   │   ├── doctorController.js
+│   │   ├── nurseController.js
+│   │   ├── patientController.js
+│   │   └── prescriptionController.js
+│   ├── services/             # Business logic
+│   │   ├── authService.js
+│   │   ├── adminService.js
+│   │   ├── doctorService.js
+│   │   ├── nurseService.js
+│   │   ├── patientService.js
+│   │   ├── prescriptionService.js
+│   │   ├── aiService.js
+│   │   ├── fcmService.js
+│   │   ├── socketService.js
+│   │   └── inngestService.js
+│   ├── models/               # Mongoose schemas
+│   │   ├── admin.model.js
+│   │   ├── doctor.model.js
+│   │   ├── nurse.model.js
+│   │   ├── patient.model.js
+│   │   ├── skill.model.js
+│   │   ├── registrationRequest.model.js
+│   │   ├── prescription.model.js
+│   │   ├── medicationSchedule.model.js
+│   │   ├── medicationReminder.model.js
+│   │   ├── escalation.model.js
+│   │   └── index.js
+│   ├── routes/               # API routes
+│   │   ├── authRoutes.js
+│   │   ├── adminRoutes.js
+│   │   ├── doctorRoutes.js
+│   │   ├── nurseRoutes.js
+│   │   ├── patientRoutes.js
+│   │   └── prescriptionRoutes.js
+│   ├── middlewares/          # Express middlewares
+│   │   ├── authMiddleware.js
+│   │   └── errorHandler.js
+│   ├── validations/          # Zod schemas
+│   │   └── zodSchemas.js
+│   ├── utils/                # Utility functions
+│   │   ├── ApiError.js
+│   │   ├── ApiResponse.js
+│   │   └── ApiHandler.js
+│   ├── db/                   # Database connection
+│   │   └── db.js
+│   ├── app.js                # Express app setup
+│   └── index.js              # Server entry point
+├── .env                       # Environment variables
+├── package.json
+└── nodemon.json (optional)
+
+===============================================================================
+                          USAGE EXAMPLES
+===============================================================================
+
+1. DOCTOR SIGNUP & LOGIN
+   POST /api/v1/auth/signup/doctor
+   Body: { name, email, password, dob, specialties }
+   Response: { user, accessToken }
+
+   Then use accessToken in Authorization header:
+   GET /api/v1/doctor/profile
+   Headers: { Authorization: "Bearer <accessToken>" }
+
+2. CREATE PATIENT & ASSIGN DOCTOR
+   POST /api/v1/admin/patients
+   Body: { name, email, password, dob, condition, severity, doctorId, nurseId }
+
+   Then doctor can view:
+   GET /api/v1/doctor/patients
+
+3. CREATE PRESCRIPTION & MEDICATION SCHEDULE
+   POST /api/v1/prescriptions
+   Body: { patientId, prescription, medications }
+
+   POST /api/v1/prescriptions/:prescriptionId/schedules
+   Body: { startDate, endDate, timezone }
+
+   This triggers Inngest job to:
+   - Generate reminders
+   - Send notifications at scheduled times
+   - Handle escalations after 5 minutes if unacknowledged
+
+4. PATIENT ACKNOWLEDGES REMINDER
+   POST /api/v1/patient/reminders/:reminderId/acknowledge
+
+   Response: { success, reminder with acknowledgedAt timestamp }
+   This prevents escalation from being created
+
+5. NURSE RESOLVES ESCALATION
+   POST /api/v1/nurse/escalations/:escalationId/resolve
+   Response: { escalation with resolved status }
+
+===============================================================================
+                            END OF DOCUMENT
+===============================================================================

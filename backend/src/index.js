@@ -1,22 +1,39 @@
-import dotenv from 'dotenv'
-import { app } from "./app.js";
-import connectDB from "./config/db.js";
 
-dotenv.config({
-    path: './.env'
-})
+import 'dotenv/config';
 
-connectDB()
-.then(() => {
-  app.listen(process.env.PORT || 8000, () => {
-        console.log(`Server is running at port ${process.env.PORT}`)
+import { app, initializeSocket } from './app.js';
+import connectDB from './db/db.js';
+import { initializeFCM } from './services/fcmService.js';
 
-    app.on("error",(error) => {
-        console.log("connectDB error",error);
-        throw error;
-    })
-    })
-})
-.catch((err) => {
-  console.log(`MONGODB connection failed`, err)
-})
+const PORT = process.env.PORT || 5000;
+
+const startServer = async () => {
+  try {
+    // Connect to MongoDB
+    await connectDB();
+    console.log('MongoDB connected successfully');
+
+    // Initialize Firebase FCM
+    initializeFCM();
+
+    // Start Express server
+    const server = app.listen(PORT, () => {
+      console.log(`Server is running at port ${PORT}`);
+    });
+
+    // Initialize Socket.IO on the same HTTP server
+    initializeSocket(server);
+
+    console.log('Socket.IO initialized successfully');
+
+    server.on('error', (error) => {
+      console.error('Server error:', error);
+    });
+
+  } catch (error) {
+    console.error('Server initialization failed:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
